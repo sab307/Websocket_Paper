@@ -1,10 +1,10 @@
 /**
- * modules/transports.js — WebTransport-only build
- * -----------------------------------------------
+ * modules/transports.js — WebSocket / WebTransport drivers
+ * --------------------------------------------------------
  *
- * Single Transport driver: HTTP/3 datagrams (unreliable, unordered) to the
- * Go relay's WebTransport endpoint (/wt?role=browser). The relay bridges the
- * QUIC datagrams to the WebSocket python leg (/ws/data?role=python).
+ * Two Transport drivers — the WebSocket driver (default, talks to the Go
+ * relay's /ws/data?role=browser endpoint) and the WebTransport driver
+ * (HTTP/3 datagrams to /wt?role=browser). createTransport(kind) dispatches.
  *
  *   interface Transport {
  *     onOpen, onClose, onMessage callbacks
@@ -14,8 +14,9 @@
  *     get isOpen(): boolean
  *   }
  *
- * WebTransport datagrams are typeless bytes — always surfaced as ArrayBuffer;
- * the JSON codec accepts bytes as well as text, so it round-trips.
+ * Both drivers surface incoming binary frames as ArrayBuffer and incoming
+ * text frames as strings; the JSON codec accepts either, so the wire codec
+ * round-trips regardless of which driver is in use.
  */
 
 import { CONFIG } from './config.js';
@@ -144,8 +145,70 @@ class WebTransportTransport extends Transport {
     }
 }
 
-export function createTransport(_kind) {
-    return new WebTransportTransport();
+class WebSocketTransport extends Transport {
+    constructor() {
+        super();
+        this._ws = null;
+        this._enc = new TextEncoder();
+    }
+
+    get label() { return 'websocket'; }
+    get isOpen() { return !!this._ws && this._ws.readyState === WebSocket.OPEN; }
+
+    async connect() {
+        const url = CONFIG.dataWsUrl;
+        logInfo('ws', `Opening WebSocket: ${url}`);
+        return new Promise((resolve, reject) => {
+            let ws;
+            try {
+                ws = new WebSocket(url);
+            } catch (e) {
+                reject(e);
+                return;
+            }
+            ws.binaryType = 'arraybuffer';
+
+            ws.onopen = () => {
+                this._ws = ws;
+                logInfo('ws', 'WebSocket open');
+                this.onOpen && this.onOpen();
+                resolve();
+            };
+            ws.onmessage = (ev) => {
+                if (!this.onMessage) return;
+                // ArrayBuffer for binary frames, string for text frames.
+                this.onMessage(ev.data);
+            };
+            ws.onclose = (ev) => {
+                logInfo('ws', `WebSocket closed code=${ev.code} reason=${ev.reason || '(none)'}`);
+                this._ws = null;
+                this.onClose && this.onClose();
+            };
+            ws.onerror = (ev) => {
+                logWarn('ws', `WebSocket error: ${ev?.message || 'unknown'}`);
+                if (ws.readyState !== WebSocket.OPEN) reject(new Error('WebSocket handshake failed'));
+            };
+        });
+    }
+
+    send(data) {
+        if (!this.isOpen) return;
+        // WebSocket.send takes ArrayBuffer / TypedArray / Blob / string directly.
+        try { this._ws.send(data); }
+        catch (e) { logError('ws', `send error: ${e?.message || e}`); }
+    }
+
+    close() {
+        try { this._ws?.close(); } catch (_) {}
+        this._ws = null;
+    }
 }
 
-export { WebTransportTransport };
+export function createTransport(kind) {
+    if (kind === 'websocket')    return new WebSocketTransport();
+    if (kind === 'webtransport') return new WebTransportTransport();
+    logWarn('transport', `Unknown transport kind '${kind}' — defaulting to websocket`);
+    return new WebSocketTransport();
+}
+
+export { WebTransportTransport, WebSocketTransport };

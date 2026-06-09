@@ -25,7 +25,7 @@ export const CONFIG = {
 
     /** Default command transport: 'webrtc' | 'websocket' | 'webtransport'.
      *  Overridden on load by the relay's /status (--type) when available. */
-    transport: 'webtransport',
+    transport: 'websocket',
 
     /** Default wire codec: 'binary' | 'json'. */
     format: 'binary',

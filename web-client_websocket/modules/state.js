@@ -14,7 +14,7 @@ export const state = {
     /** The current Transport instance (WebRTC | WebSocket | WebTransport). */
     link:         null,
     /** Selected transport kind: 'webrtc' | 'websocket' | 'webtransport'. */
-    transport:    'webtransport',
+    transport:    'websocket',
     /** Selected wire codec: 'binary' | 'json'. Mirrored to the UI radio group
      *  via setupFormatSelector(); both ends of the link MUST agree (Python
      *  side is told via --format). Default overridden at init from CONFIG. */
